@@ -158,9 +158,9 @@ rs485_gateway/
 
 ## 运行效果
 
-[<img src="assets/demo_cover.jpg" width="240" alt="演示视频封面，点击播放">](assets/demo.mp4)
+[<img src="assets/demo_cover.jpg" width="240" alt="演示视频封面">](assets/demo.mp4)
 
-*点击封面观看完整演示视频（2 分 22 秒），GitHub 仓库内置播放器可直接播放，无需下载。*
+*点击封面跳转到视频文件页。GitHub 对较大体积（9.66 MB）的视频不直接预览，需下载到本地后用 VLC / PotPlayer / 系统播放器打开观看（2 分 22 秒）。*
 
 - OLED 实时显示两路传感器数值与在线状态，报警时显示 `ALARM:ON`
 - **温度越上限报警**（仅温度参与判定，湿度只采集上报）→ 蜂鸣器响 + 三灯 200ms 轮闪；低于回差解除线（上限 −1℃）自动复位
