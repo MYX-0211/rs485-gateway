@@ -81,7 +81,7 @@ void UART2_PrintLine(const char *s);
  * 应用层：FreeRTOS 多任务 + 业务逻辑
  *   任务优先级：sensor(3) > led(2) > net/oled/key(1)
  *   数据流：vTaskSensor 采集 → xQueueSensor(Overwrite 深1) → vTaskOLED / vTaskNet
- *   报警流：Alarm_Check(温湿度越限) → alarm_active → vTaskLED 轮闪 + 蜂鸣器
+ *   报警流：Alarm_Check(温度越上限) → alarm_active → vTaskLED 轮闪 + 蜂鸣器
  * ==========================================================================*/
 typedef enum {
     SENSOR_TH = 0,      /* 温湿度传感器（寄存器 0x0000 起） */
@@ -207,7 +207,7 @@ volatile UIState_t g_ui_state = UI_NORMAL;
 volatile uint8_t alarm_active = 0;
 
 /**
- * @brief  温湿度越限报警状态机（含回差防抖），并驱动蜂鸣器
+ * @brief  温度越上限报警状态机（含回差防抖），并驱动蜂鸣器
  * @param  s 温湿度传感器（读其 online/temp，写全局 alarm_active）
  */
 void Alarm_Check(Sensor_t *s)
@@ -282,7 +282,7 @@ void vTaskSensor(void *arg)
         Sensor_PollRTOS(&sensor_light, 0x01);   /* 锁外等待 + 锁内单次事务 */
         Sensor_PollRTOS(&sensor_th,    0x02);
 
-        Alarm_Check(&sensor_th);                /* 报警判定（仅温湿度） */
+        Alarm_Check(&sensor_th);                /* 报警判定（仅温度越上限） */
 
         g_report = (SensorReport_t){
             sensor_light.online, sensor_th.online,
