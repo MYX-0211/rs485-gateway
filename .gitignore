@@ -1,0 +1,30 @@
+# ===== Keil MDK 本地用户配置（不提交，含本机路径/用户名） =====
+MDK-ARM/*.uvguix.*
+MDK-ARM/*.uvoptx
+MDK-ARM/EventRecorderStub.scvd
+MDK-ARM/DebugConfig/
+MDK-ARM/ExtDll.iex
+
+# ===== 编译中间产物 =====
+MDK-ARM/Objects/
+MDK-ARM/Listings/
+MDK-ARM/rs485_gateway/
+*.o
+*.d
+*.crf
+*.axf
+*.map
+*.lst
+*.dep
+*.htm
+*.lnp
+*.build_log.htm
+
+# ===== CubeMX 工程缓存 =====
+.mxproject
+
+# ===== 工作区本地数据 =====
+.workbuddy/
+
+# ===== 本地文档（厂商手册 / 演示视频），按需手动 add -f 添加 =====
+Doc/
