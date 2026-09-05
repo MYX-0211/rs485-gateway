@@ -4,6 +4,8 @@
 
 ![语言](https://img.shields.io/badge/language-C-orange) ![RTOS](https://img.shields.io/badge/RTOS-FreeRTOS%20V11.1.0-blue) ![IDE](https://img.shields.io/badge/IDE-Keil%20MDK-green) ![MCU](https://img.shields.io/badge/MCU-STM32F407VGT6-yellow)
 
+> 配套作品：[pid-gateway](https://github.com/MYX-0211/pid-gateway)（电机 PID 速度闭环 + CAN 双向）——两项目形成「采集上云 + 实时控制」互补，覆盖工控常见双链路。
+
 ## 目录
 
 - [系统架构](#系统架构)
