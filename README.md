@@ -6,6 +6,8 @@
 
 > 配套作品：[pid-gateway](https://github.com/MYX-0211/pid-gateway)（电机 PID 速度闭环 + CAN 双向）——两项目形成「采集上云 + 实时控制」互补，覆盖工控常见双链路。
 
+**English Overview**: FreeRTOS-based industrial RS485/Modbus-RTU sensor gateway on STM32F407VGT6 — polls lux/temp-humidity sensors over a half-duplex bus (DMA + idle-line framing, CRC16), drives OLED/key/buzzer, and reports to a TCP server via ESP-01S Wi-Fi.
+
 ## 目录
 
 - [系统架构](#系统架构)
@@ -157,6 +159,8 @@ rs485_gateway/
   ```
   [ESP] r=0 lux=123.4,temp=25.6,humi=48.2,alarm=0
   ```
+
+> 调试复盘（timebase 卡死 / printf 加锁 / ESP 异步化等 6 条真实踩坑）见 [Doc/debug-log.md](Doc/debug-log.md)。
 
 ## 运行效果
 
