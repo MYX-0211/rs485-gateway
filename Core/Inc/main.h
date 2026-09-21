@@ -63,6 +63,8 @@ void Error_Handler(void);
 #define KEY1_GPIO_Port GPIOE
 #define KEY3_Pin GPIO_PIN_4
 #define KEY3_GPIO_Port GPIOE
+#define W25Q64_CS_Pin GPIO_PIN_4
+#define W25Q64_CS_GPIO_Port GPIOA
 #define LED1_Pin GPIO_PIN_10
 #define LED1_GPIO_Port GPIOD
 #define LED2_Pin GPIO_PIN_13
@@ -73,9 +75,13 @@ void Error_Handler(void);
 #define RS485_DE_GPIO_Port GPIOA
 #define BUZZER_Pin GPIO_PIN_5
 #define BUZZER_GPIO_Port GPIOB
+
+/* USER CODE BEGIN Private defines */
+
+/* ⚠️ 必须放在 USER CODE 区内：这些宏原来写在区外，被 CubeMX 重新生成时清掉了
+ *    （导致 main.c 报 LED_ON / LED_OFF 未定义）。 */
 #define LED_ON   GPIO_PIN_SET     /* LED 点亮电平：高电平亮（板载三色灯，低电平灭） */
 #define LED_OFF  GPIO_PIN_RESET
-/* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */
 

@@ -1,12 +1,18 @@
 /* ============================================================================
  * rs485.c — RS485 半双工总线驱动（USART1 + MAX485，DMA + 空闲中断）
  *   方向控制：PA8(DE) 高=发送 低=接收；发送完成(TC)中断自动切回接收
- *   接收方式：HAL_UARTEx_ReceiveToIdle_DMA —— 总线空闲(>3.5字符)自动判帧，
- *             天然满足 Modbus RTU 帧间隔要求
+ *   接收方式：HAL_UARTEx_ReceiveToIdle_DMA —— 用空闲中断判定「一帧收完」
+ *   口径说明（原注释写错过，已修正）：
+ *      STM32 的 IDLE 中断门限是「总线空闲 ≥ 1 个字符时间」，不是 3.5 字符。
+ *      Modbus RTU 的 3.5 字符静默是帧间间隔要求，由主站发送节奏保证——
+ *      modbus.c 的事务是「一请求一等答」，两帧之间天然留出远超 3.5T 的静默。
+ *      即：IDLE 门限（1 字符，用于判本帧结束）与 3.5T（帧间静默，用于总线时序）
+ *      是两件不同的事，不能混为一谈。
  *   同步机制：xSemTx=发送完成信号量，xSemRx=接收完成信号量（Modbus 层等待）
  *   双缓冲：rs485_dma_buf 仅供 DMA 写入，事件回调拷贝到 rs485_rx_buf 供解析
  * ==========================================================================*/
 #include "rs485.h"
+#include "esp01s.h"      /* ESP_RxEventHandler：USART3 接收事件分流目标 */
 #include "string.h"
 #include "FreeRTOS.h"  
 #include "semphr.h"        
@@ -44,7 +50,10 @@ void RS485_Init(void)
     xSemTx = xSemaphoreCreateBinary();   /* 发送完成信号量 */
     xSemRx = xSemaphoreCreateBinary();   /* 接收完成信号量 */
     RS485_RxMode();                      /* 默认接收态，避免上电瞬间误发 */
-    /* 空闲中断 + DMA 接收：总线空闲(>3.5 字符)自动判帧，天然满足 Modbus RTU 帧间隔 */
+    /* 空闲中断 + DMA 接收：总线空闲 ≥1 个字符时间即触发一次拷贝，
+     * 以「本帧收完」作为判帧依据（注意 IDLE 门限是 1 个字符时间，
+     * 与 Modbus RTU 要求的帧间 3.5 字符静默是两回事——后者由 Modbus 事务
+     * 「一请求一等答」的发送节奏保证，不依赖 IDLE 门限） */
     HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rs485_dma_buf, RS485_RXBUF_SIZE);
     __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);   /* 禁用半传输中断，仅由空闲中断触发一次拷贝 */
 }
@@ -93,7 +102,9 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
     }
 }
 
-/* UART 接收事件回调（总线空闲中断触发） */
+/* UART 接收事件回调（总线空闲中断触发）
+ * 说明：HAL 中该弱回调全工程只能有一处定义，故 USART1(RS485) 与 USART3(ESP-01S)
+ *       在此分流。USART3 分支的实现全部在 esp01s.c，此处仅做转发。 */
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 {
     if (huart->Instance == USART1) {
@@ -105,6 +116,9 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
         HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rs485_dma_buf, RS485_RXBUF_SIZE);
         xSemaphoreGiveFromISR(xSemRx, &hpw);      /* 通知 Modbus 层已收到一帧 */
         portYIELD_FROM_ISR(hpw);
+    }
+    else if (huart->Instance == USART3) {
+        ESP_RxEventHandler(huart, Size);          /* ESP-01S：DMA 整帧接收（esp01s.c） */
     }
 }
 

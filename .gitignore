@@ -28,3 +28,21 @@ MDK-ARM/rs485_gateway/
 
 # ===== 本地文档（厂商手册 / 演示视频），按需手动 add -f 添加 =====
 Doc/
+
+# ===== 编译日志 / 调试输出（不入库） =====
+MDK-ARM/*.log
+
+# ===== 本地备份目录 =====
+.bak_*/
+.tmp_ctest/
+
+# ===== Keil RTE 与 BOOT Target 编译输出 =====
+MDK-ARM/RTE/
+MDK-ARM/boot/
+
+# ===== OTA 固件产物（需要时用 add -f 手动加） =====
+Doc/*.bin
+
+# ===== 临时抓取/调试文件 =====
+bili.json
+*.tmp

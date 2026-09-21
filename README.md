@@ -14,6 +14,7 @@
 - [功能特性](#功能特性)
 - [硬件清单](#硬件清单)
 - [软件设计要点](#软件设计要点)
+- [OTA 固件升级](#ota-固件升级)
 - [工程结构](#工程结构)
 - [环境与构建](#环境与构建)
 - [运行配置](#运行配置)
@@ -63,7 +64,10 @@
 - **任务间通信与同步**：深 1 队列 + `xQueueOverwrite` 广播最新数据帧；互斥锁保护 RS485 总线与 printf 输出；信号量实现发送/接收完成同步（含 ISR 安全释放）
 - **温度越限报警**：三态判定 + 回差（hysteresis）防抖，按键可在线调节阈值并落 OLED 设置页
 - **ESP-01S Wi-Fi 上报**：AT 指令完整状态机（退出透传 → 复位 → 探测 → STA 配网 → TCP 连接），UART 丢字节环境下健壮的多关键字匹配与安全重试
-- **工业传感器解析**：按厂商特殊编码解析温度（非标准 int16 补码），32 位光照跨寄存器大端合并
+- **MQTT 双向通信**：经 ESP-01S 接入 EMQX，上行 5s 周期上报 JSON（光照/温湿度/报警），下行订阅 `rs485gw/cmd` 接收阈值设置与查询指令
+- **OTA 固件升级**：Bootloader + 双区切换 + 外部 SPI Flash 暂存，CRC16 整包校验与回读校验，校验失败自动保持旧固件运行
+- **参数掉电保存**：报警阈值写入外部 Flash 参数区，采用日志式追加写（避免频繁擦除），上电自动加载
+- **工业传感器解析**：按厂商特殊编码解析温度（非标准 int16 补码），32 位光照跨寄存器大端合并；温湿度经 `0x04` 读输入寄存器
 
 ## 硬件清单
 
@@ -74,6 +78,7 @@
 | 光照传感器 | B-RS-L30（Modbus，地址 0x01） | 寄存器 0x0002，32 位值 ÷1000 = Lux |
 | 温湿度传感器 | HKDZ-SHT30-RS（Modbus，地址 0x02） | 寄存器 0x0000/0x0001，厂商特殊编码 |
 | Wi-Fi 模块 | ESP-01S（ESP8266） | STA 模式，TCP Client |
+| 外部 Flash | W25Q64（8MB SPI NOR） | OTA 固件暂存 + 参数区，SPI1（PB3/PB4/PB5，CS=PA4） |
 | 显示 | SSD1306 OLED 0.96" | I2C，4 行 × 16 字符 |
 | 交互 | 按键 ×3 / 有源蜂鸣器 / LED ×3 | 阈值调节、报警指示 |
 
@@ -96,31 +101,100 @@
 - **printf 重定向加锁**：`fputc` 经互斥锁串行化到 UART2，多任务并发打印不交错；调度器启动前自动降级裸发
 - **栈与堆防护**：使能 `configCHECK_FOR_STACK_OVERFLOW` 与 malloc 失败钩子，爆栈/堆耗尽时打印任务名并停机，便于定位
 - **ESP 初始化异步化**：配网与 TCP 重试（最坏数十秒）放入 `vTaskNet` 后台执行，调度器与 OLED 立即启动，不被网络阻塞
+- **ESP 接收通道改造**：早期逐字节阻塞轮询在高优先级任务抢占时会丢字节（USART 无 FIFO，1ms 内可到 11 字节）。改为 DMA + 空闲中断 + 信号量后彻底解决，并补上错误恢复回调（`HAL_UART_ErrorCallback` 未实现时通道会永久静默）
+- **OTA 顺序设计**：先在外部 Flash 暂存区完整收齐并校验通过，才动 APP 区 —— 任何时刻断电，至少有一份完整固件；搬运中断也能在下次上电自动重试
+
+## OTA 固件升级
+
+采用 **Bootloader 双区 + 外部 Flash 暂存** 方案，全程约 11 秒（48 KB 固件）：
+
+```
+  PC (tools/ota_sender.py)
+    │  TCP :9000，按行下发 hex 编码固件
+    ▼
+  ESP-01S ──( +IPD,<len>:<data> )──► APP (vTaskNet)
+    │  解析 +IPD 前缀 → hex 解码 → 累加 CRC16 → 写入 W25Q64 暂存区
+    ▼
+  复位 ──► Bootloader：读暂存区头 → 校验整包 CRC
+           ├─ 通过 → 擦 APP 区 → 按扇区搬运 → 回读校验 → 清标志
+           └─ 不通过 → 直接跳 APP（旧固件照常运行）
+```
+
+**Flash 分区**
+
+| 区域 | 地址 | 大小 | 用途 |
+|---|---|---|---|
+| Bootloader | `0x08000000` | 64 KB | 升级搬运（裸机，不复用 APP 代码）|
+| APP | `0x08010000` | 704 KB | 应用固件 |
+| W25Q64 暂存区 | `0x000000` | 1 MB | 待搬运的新固件 |
+| W25Q64 备份区 | `0x100000` | 1 MB | 预留（回滚用）|
+
+**关键设计**
+
+- **升级期间不影响运行**：固件先落在外部 SPI Flash，不占用内部 Flash —— 写入期间 APP 照常采集上报
+- **刷坏不变砖**：暂存区校验不通过时 Bootloader 不碰 APP 区，旧固件继续运行
+- **顺序保证**：擦除在开始接收之前一次性完成（擦内部 Flash 时同 Bank 取指 stall，边收边擦会丢帧）
+- **回读校验**：搬运后把 APP 区读回来重新算 CRC，不依赖"写入成功"的返回值
+
+**使用方法**
+
+```bash
+# 1. PC 上启动下发脚本（监听 9000）
+python tools/ota_sender.py Doc/app_v1.bin
+#    或直接双击 tools/run_ota_sender.bat
+
+# 2. 设备收到 MQTT 指令后断开 MQTT、连上 PC 并接收固件
+#    MQTTX 向 rs485gw/cmd 发布： {"cmd":"ota_recv"}
+
+# 3. 接收完成并校验通过后复位，Bootloader 自动搬运并跳转
+```
+
+**实测性能**（48 KB 固件）
+
+| 环节 | 耗时 |
+|---|---|
+| 擦除暂存区 704 KB（64 KB 块擦）| ≈ 1.2 s |
+| 接收 48 KB（hex over UART @115200）| ≈ 8.7 s |
+| Bootloader 校验 + 擦 APP 扇区 + 搬运 + 回读 | ≈ 1.0 s |
+| **设备侧合计** | **≈ 11 s** |
+
+> 接收环节受 UART 速率限制（hex 编码使传输量翻倍）；如需提速可提高 USART3 波特率或改用二进制传输。
 
 ## 工程结构
 
 ```
 rs485_gateway/
+├── Bootloader/
+│   └── boot_main.c             # OTA Bootloader（裸机，双区升级搬运）
 ├── Core/                       # 应用代码（CubeMX + 自研）
 │   ├── Inc/
 │   │   ├── main.h              # 引脚宏定义（按键/LED/RS485/蜂鸣器）
 │   │   ├── modbus.h            # Modbus RTU 主站接口
 │   │   ├── rs485.h             # RS485 半双工驱动接口
 │   │   ├── esp01s.h            # ESP-01S Wi-Fi 驱动接口
+│   │   ├── w25q64.h / spi.h    # 外部 SPI Flash 驱动 / SPI1 初始化
+│   │   ├── param.h             # 报警阈值掉电保存
+│   │   ├── ota.h               # OTA 共享定义（分区/头部结构/CRC16）
 │   │   ├── oled.h / oledfont.h # SSD1306 驱动 / 8×16 字库
 │   │   └── FreeRTOSConfig.h    # FreeRTOS 裁剪配置
 │   └── Src/
-│       ├── main.c              # 应用层：任务创建 + 业务逻辑
-│       ├── modbus.c            # CRC16 + 0x03 读寄存器事务
+│       ├── main.c              # 应用层：任务创建 + 业务逻辑 + OTA 接收
+│       ├── modbus.c            # CRC16 + 寄存器读事务（0x03 / 0x04）
 │       ├── rs485.c             # UART+DMA 收发、方向切换、回调
-│       ├── esp01s.c            # AT 指令状态机、TCP 上报
+│       ├── esp01s.c            # AT 指令状态机、TCP 上报、MQTT、取流接口
+│       ├── w25q64.c / spi.c    # Flash 读写擦除 / SPI1 外设
+│       ├── param.c             # 参数区日志式追加写
 │       ├── oled.c              # OLED 底层 I2C 时序
 │       └── usart.c / i2c.c ... # CubeMX 外设初始化
 ├── FreeRTOS/                   # FreeRTOS V11.1.0 精简内核
 │   ├── Inc/                    # 内核头文件
 │   └── Src/                    # list/tasks/queue/port/heap_4 等
 ├── Drivers/                    # CMSIS + STM32F4xx HAL 库
-├── MDK-ARM/rs485_gateway.uvprojx   # Keil 工程（直接打开）
+├── tools/
+│   ├── ota_sender.py           # OTA 固件下发（PC 侧 TCP Server）
+│   ├── run_ota_sender.bat      # 双击启动器（自动定位解释器）
+│   └── after_cubemx.py         # CubeMX 重新生成后的配置恢复脚本
+├── MDK-ARM/rs485_gateway.uvprojx   # Keil 工程（APP / BOOT 双 Target）
 └── rs485_gateway.ioc           # CubeMX 配置（可重新生成）
 ```
 
