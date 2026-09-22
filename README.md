@@ -1,12 +1,12 @@
 # RS485 多传感器环境监测网关（STM32F407 + FreeRTOS）
 
-基于 **STM32F407VGT6** 的工业 RS485 总线数据采集网关：以 **Modbus RTU 主站**轮询总线上的光照 / 温湿度传感器，经 **FreeRTOS 多任务**调度完成采集、显示、报警与 **ESP-01S Wi-Fi TCP** 远程上报，是一套完整的嵌入式「采集 → 处理 → 交互 → 上云」工程实践。
+基于 **STM32F407VGT6** 的工业 RS485 总线数据采集网关：以 **Modbus RTU 主站**轮询总线上的光照 / 温湿度传感器，经 **FreeRTOS 多任务**调度完成采集、显示、越限报警，并通过 **ESP-01S Wi-Fi** 接入 **MQTT（EMQX）** 上报与接收远程指令，支持 **OTA 双区固件升级**，是一套完整的嵌入式「采集 → 处理 → 交互 → 上云 → 可远程升级」工程实践。
 
-![语言](https://img.shields.io/badge/language-C-orange) ![RTOS](https://img.shields.io/badge/RTOS-FreeRTOS%20V11.1.0-blue) ![IDE](https://img.shields.io/badge/IDE-Keil%20MDK-green) ![MCU](https://img.shields.io/badge/MCU-STM32F407VGT6-yellow)
+![语言](https://img.shields.io/badge/language-C-orange) ![RTOS](https://img.shields.io/badge/RTOS-FreeRTOS%20V11.1.0-blue) ![IDE](https://img.shields.io/badge/IDE-Keil%20MDK-green) ![MCU](https://img.shields.io/badge/MCU-STM32F407VGT6-yellow) ![协议](https://img.shields.io/badge/protocol-Modbus%20RTU%20%2F%20MQTT-9cf) ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
 > 配套作品：[pid-gateway](https://github.com/MYX-0211/pid-gateway)（电机 PID 速度闭环 + CAN 双向）——两项目形成「采集上云 + 实时控制」互补，覆盖工控常见双链路。
 
-**English Overview**: FreeRTOS-based industrial RS485/Modbus-RTU sensor gateway on STM32F407VGT6 — polls lux/temp-humidity sensors over a half-duplex bus (DMA + idle-line framing, CRC16), drives OLED/key/buzzer, and reports to a TCP server via ESP-01S Wi-Fi.
+**English Overview**: FreeRTOS-based industrial RS485/Modbus-RTU sensor gateway on STM32F407VGT6 — polls lux/temp-humidity sensors over a half-duplex bus (DMA + idle-line framing, CRC16), drives OLED/key/buzzer, reports JSON over MQTT (EMQX) via an ESP-01S Wi-Fi module, accepts remote threshold commands, and supports OTA firmware upgrade with a dual-region bootloader plus external SPI-flash staging.
 
 <p align="center">
   <img src="assets/screenshots/hardware_wiring.jpg" width="560" alt="RS485 网关实物接线：STM32F407 核心板 + MAX485 + OLED + ESP-01S + 温湿度传感器">
@@ -25,6 +25,7 @@
 - [环境与构建](#环境与构建)
 - [运行配置](#运行配置)
 - [运行效果与实拍](#运行效果与实拍)
+- [许可证](#许可证)
 
 ## 系统架构
 
@@ -68,7 +69,7 @@ flowchart TB
     T3 --> ESP
     T3 --> W25
     ESP <-->|"JSON 上行 / 指令下行"| CLOUD
-    W25 -->|"OTA 固件暂存"| CLOUD
+    CLOUD -.->|"OTA 固件下发（经 PC TCP:9000）"| W25
 
     style MCU fill:#dae8fc,stroke:#6c8ebf
     style Q fill:#fff2cc,stroke:#d6b656
@@ -257,15 +258,20 @@ flowchart LR
 **使用方法**
 
 ```bash
+# 0. 先生成待下发的固件 bin（Doc/*.bin 不入库，需本地自行导出）
+fromelf --bin --output=Doc/app_v1.bin MDK-ARM/rs485_gateway/rs485_gateway.axf
+
 # 1. PC 上启动下发脚本（监听 9000）
 python tools/ota_sender.py Doc/app_v1.bin
-#    或直接双击 tools/run_ota_sender.bat
+#    或直接双击 tools/run_ota_sender.bat（自动探测可用 Python，缺省发送 Doc/app_v1.bin）
 
 # 2. 设备收到 MQTT 指令后断开 MQTT、连上 PC 并接收固件
 #    MQTTX 向 rs485gw/cmd 发布： {"cmd":"ota_recv"}
 
 # 3. 接收完成并校验通过后复位，Bootloader 自动搬运并跳转
 ```
+
+> `fromelf` 随 Keil MDK 一同安装；也可在 Keil 的 Target Options → User → After Build 中挂上该命令，编译后自动导出 bin。
 
 **实测性能**（48 KB 固件）
 
@@ -286,7 +292,7 @@ python tools/ota_sender.py Doc/app_v1.bin
 [OTA] disconnecting MQTT before TCP transfer...
 [OTA] erasing stage area (704 KB)...
 [OTA] stage erased
-[OTA] TCP connected to 10.216.109.38:9000, receiving...
+[OTA] TCP connected to 192.168.1.100:9000, receiving...
 [OTA] recv 8192 B
 [OTA] recv 16384 B
 [OTA] recv 24576 B
@@ -334,22 +340,28 @@ rs485_gateway/
 │   ├── Inc/                    # 内核头文件
 │   └── Src/                    # list/tasks/queue/port/heap_4 等
 ├── Drivers/                    # CMSIS + STM32F4xx HAL 库
-├── tools/
+├── tools/                      # PC 侧辅助脚本
 │   ├── ota_sender.py           # OTA 固件下发（PC 侧 TCP Server）
-│   ├── run_ota_sender.bat      # 双击启动器（自动定位解释器）
-│   └── after_cubemx.py         # CubeMX 重新生成后的配置恢复脚本
+│   ├── run_ota_sender.bat      # 双击启动器（自动探测可用的 Python 解释器）
+│   ├── after_cubemx.py         # CubeMX 重新生成后的配置恢复脚本
+│   ├── check_printf_ascii.py   # 校验 printf 字面量不含非 ASCII（AC5 按 GBK 解析源码）
+│   └── strip_ai_comment_style.py # 清理 C 注释里的 Markdown / emoji 残留
+├── Doc/
+│   └── debug-log.md            # 调试复盘（6 条真实踩坑，已入库；其余手册/视频为本地资料）
 ├── assets/                     # 演示视频 + 运行实拍截图
 │   ├── demo.mp4 / demo_cover.jpg
 │   └── screenshots/            # 硬件接线 / OLED / MQTTX / OTA 串口日志
 ├── MDK-ARM/rs485_gateway.uvprojx   # Keil 工程（APP / BOOT 双 Target）
-└── rs485_gateway.ioc           # CubeMX 配置（可重新生成）
+├── rs485_gateway.ioc           # CubeMX 配置（可重新生成）
+├── LICENSE                     # MIT
+└── README.md
 ```
 
 ## 环境与构建
 
 | 工具 | 版本 | 说明 |
 |---|---|---|
-| Keil MDK | μVision5（ARM Compiler V5/V6 均可） | 打开 `MDK-ARM/rs485_gateway.uvprojx` 直接编译 |
+| Keil MDK | μVision5（工程按 **ARM Compiler 5 / AC5** 配置，`uAC6=0`） | 打开 `MDK-ARM/rs485_gateway.uvprojx` 直接编译 |
 | STM32CubeMX | 任意支持 F4 的版本 | 可选：修改 `.ioc` 重新生成外设代码 |
 | 烧录 | ST-Link / J-Link | Keil 下载按钮直接烧录 |
 
@@ -357,25 +369,39 @@ rs485_gateway/
 
 1. 安装 Keil MDK5 与 STM32F4 器件支持包（Device Family Pack）
 2. 打开 `MDK-ARM/rs485_gateway.uvprojx`
-3. （可选）安装 FreeRTOS 内核源码路径已内置于工程，无需手动添加
-4. 编译（F7）→ 下载（F8）→ 复位运行
+3. FreeRTOS 内核源码已内置于仓库（`FreeRTOS/`），无需额外安装或手动添加路径
+4. 按需切换工程内两个 Target 分别编译：`rs485_gateway`（APP，`0x08010000`）与 `BOOT`（Bootloader，`0x08000000`）
+5. 编译（F7）→ 下载（F8）→ 复位运行
 
-> 注：工程为 CubeMX 生成结构，`Core` 中带有 `USER CODE` 标记的代码段可被 CubeMX 保留，便于后续重新生成外设代码。
+> 注：工程为 CubeMX 生成结构，`Core` 中带有 `USER CODE` 标记的代码段可被 CubeMX 保留，便于后续重新生成外设代码。重新生成后如遇外设配置被覆盖，可参考 `tools/after_cubemx.py` 恢复。
 
 ## 运行配置
 
-烧录前修改 `Core/Src/main.c` 顶部宏（已脱敏为占位符）：
+烧录前修改 `Core/Src/main.c` 顶部宏（仓库内均为占位符，不含任何真实凭据）：
 
 ```c
-#define WIFI_SSID    "YOUR_SSID"       /* 2.4G 热点名 */
+#define WIFI_SSID    "YOUR_SSID"       /* 2.4G 热点名（ESP-01S 只支持 2.4G，勿填 5G） */
 #define WIFI_PWD     "YOUR_PASSWORD"   /* 热点密码 */
-#define SERVER_IP    "192.168.1.100"   /* TCP Server（PC）的局域网 IP */
-#define SERVER_PORT  8000              /* TCP Server 端口 */
+/* USE_MQTT=1 -> MQTT broker：填 PC 的 IP，由 PC 上的 portproxy 转发到 EMQX 虚拟机
+ * USE_MQTT=0 -> 裸 TCP：填 PC 网络调试助手的地址，端口与助手的 TCPServer 一致 */
+#define SERVER_IP    "192.168.1.100"   /* PC 在该网络下的 IP（换网络必须同步改，用 ipconfig 查） */
+#if USE_MQTT
+#define SERVER_PORT  1883              /* MQTT broker 端口 */
+#else
+#define SERVER_PORT  8000              /* PC 网络调试助手 TCPServer 端口 */
+#endif
 ```
 
+上报链路由 `Core/Inc/esp01s.h` 中的 `USE_MQTT` 开关切换（默认 `1` = 走 MQTT），三处端口用途不同、不要混淆：
+
+| 用途 | 端口 | 定义位置 | 对端 |
+|---|---|---|---|
+| MQTT 上行 / 指令下行（`USE_MQTT=1`） | 1883 | `main.c` `SERVER_PORT` | EMQX broker |
+| 裸 TCP 上报（`USE_MQTT=0`） | 8000 | `main.c` `SERVER_PORT` | PC 网络调试助手（TCP Server 模式） |
+| OTA 固件下发 | 9000 | `main.c` `OTA_SRV_PORT` | PC `tools/ota_sender.py` |
+
 - ESP-01S 仅支持 **2.4G** Wi-Fi；公共热点若需网页/短信认证（Portal）无法直连，请换普通热点
-- PC 端使用任意网络调试助手，**必须开 TCP Server 模式**、端口与 `SERVER_PORT` 一致
-- 换网络后 `SERVER_IP` 需同步改为 PC 在该网络下的实际 IP
+- 换网络后 `SERVER_IP` 需同步改为 PC 在该网络下的实际 IP；PC 端使用任意网络调试助手时必须开 **TCP Server 模式**、端口与 `SERVER_PORT` 一致
 - 串口调试输出在 **UART2（115200 8N1）**；数据 5 s 一条，打印内容与 MQTT 上行 JSON 完全一致：
   ```
   [ESP] r=0 {"seq":3,"up":15155,"lux":30.6,"temp":24.8,"humi":42.6,"alarm":0}
@@ -402,6 +428,10 @@ rs485_gateway/
 - **温度越上限报警**（仅温度参与判定，湿度只采集上报）→ 蜂鸣器响 + 三灯 200ms 轮闪；低于回差解除线（上限 −1℃）自动复位
 - KEY1 进入设置页，KEY2/KEY3 调节温度报警上限（0.5℃ 步进，调节范围有上下界钳制）；也可由 MQTT `set_hi` 远程修改，两者共用同一条参数落盘路径，掉电不丢
 
+## 许可证
+
+本项目基于 [MIT License](LICENSE) 开源，可自由用于学习、修改与二次开发（保留版权声明即可）。
+
 ---
 
-*个人作品，用于嵌入式软件岗位求职展示。演示视频见 [assets/demo.mp4](assets/demo.mp4)，运行实拍截图见 [assets/screenshots](assets/screenshots)；硬件/传感器手册等本地资料未随仓库分发（Doc/ 目录已在 .gitignore 排除）。*
+*个人作品，用于嵌入式软件岗位求职展示。演示视频见 [assets/demo.mp4](assets/demo.mp4)，运行实拍截图见 [assets/screenshots](assets/screenshots)，调试复盘见 [Doc/debug-log.md](Doc/debug-log.md)；传感器与模块手册等第三方本地资料未随仓库分发（`Doc/` 除 `debug-log.md` 外已在 `.gitignore` 排除）。*

@@ -50,13 +50,13 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define WIFI_SSID    "OPPO"       /* 2.4G 热点名 */
-#define WIFI_PWD     "123456789"   /* 热点密码 ★请核对位数（9/17 日志里 ESP 收到的是 10 位） */
+#define WIFI_SSID    "YOUR_SSID"       /* 2.4G 热点名（ESP-01S 只支持 2.4G，勿填 5G） */
+#define WIFI_PWD     "YOUR_PASSWORD"   /* 热点密码 */
 /* ---- 上报目标：含义随 USE_MQTT（定义在 esp01s.h）变化 ----
  * USE_MQTT=1 → MQTT broker：填PC 的 IP，由 PC 上的 portproxy 转发到 EMQX 虚拟机
  *              （EMQX 在 VMware NAT 网 192.168.137.128，ESP 进不去该网段，故必须经 PC 转发）
  * USE_MQTT=0 -> 裸 TCP：填 PC 网络调试助手的地址，端口与助手的 TCPServer 一致 */
-#define SERVER_IP    "10.216.109.38"   /* PC 在 OPPO 热点上的 IP（换网络必须同步改） */
+#define SERVER_IP    "192.168.1.100"   /* PC 在该网络下的 IP（换网络必须同步改，用 ipconfig 查） */
 #if USE_MQTT
 #define SERVER_PORT  1883              /* MQTT broker 端口 */
 #else
